@@ -1,0 +1,30 @@
+{
+  "name": "Tirtafield - Presensi Mobile",
+  "short_name": "Absensi Lapangan",
+  "description": "Aplikasi Presensi Mobile Terintegrasi PERUMDA Air Minum Tirta Kepri",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#001453",
+  "theme_color": "#00288E",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/images/app.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "/images/app.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "/images/app.jpg",
+      "sizes": "1754x1754",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}
