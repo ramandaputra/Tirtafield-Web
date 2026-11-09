@@ -175,6 +175,11 @@ class WebDashboardController extends Controller
             $systemSettings['geofencing']['active_office_id'] = $primary['id'] ?? ($systemSettings['geofencing']['offices'][0]['id'] ?? 'hq');
         }
 
+        $nowJakarta = Carbon::now('Asia/Jakarta');
+        $isDiniHari = ($nowJakarta->hour < 7);
+        $yesterday = $nowJakarta->copy()->subDay()->toDateString();
+        $isOvernightActive = false;
+
         // 4 Slot Presensi Pengguna Login Hari Ini
         $mySlots = [
             'masuk'           => null,
@@ -193,6 +198,42 @@ class WebDashboardController extends Controller
             foreach ($myRecords as $r) {
                 if (array_key_exists($r->slot_type, $mySlots)) {
                     $mySlots[$r->slot_type] = $r->toSlotArray();
+                }
+            }
+
+            // Karyawan yang lembur hingga ganti hari dan pulang saat dini hari
+            if ($isDiniHari) {
+                $yesterdayMasuk = Presensi::where(function ($q) use ($user) {
+                        $q->where('pgw_id', $user->id)
+                          ->orWhere('nik', $user->nik);
+                    })
+                    ->whereDate('tanggal', $yesterday)
+                    ->where('slot_type', 'masuk')
+                    ->first();
+
+                $yesterdayPulang = Presensi::where(function ($q) use ($user) {
+                        $q->where('pgw_id', $user->id)
+                          ->orWhere('nik', $user->nik);
+                    })
+                    ->whereDate('tanggal', $yesterday)
+                    ->where('slot_type', 'pulang')
+                    ->first();
+
+                $diniHariPulangToday = Presensi::where(function ($q) use ($user) {
+                        $q->where('pgw_id', $user->id)
+                          ->orWhere('nik', $user->nik);
+                    })
+                    ->whereDate('tanggal', $today)
+                    ->where('slot_type', 'pulang')
+                    ->whereTime('waktu', '<', '07:00:00')
+                    ->first();
+
+                if ($yesterdayMasuk && !$yesterdayPulang && !$diniHariPulangToday && empty($mySlots['pulang'])) {
+                    $isOvernightActive = true;
+                } elseif ($diniHariPulangToday && empty($mySlots['pulang'])) {
+                    $mySlots['pulang'] = $diniHariPulangToday->toSlotArray();
+                } elseif ($yesterdayPulang && empty($mySlots['pulang']) && Carbon::parse($yesterdayPulang->waktu)->isToday()) {
+                    $mySlots['pulang'] = $yesterdayPulang->toSlotArray();
                 }
             }
         }
@@ -218,18 +259,35 @@ class WebDashboardController extends Controller
             ->get();
 
         // Pengajuan approval diambil langsung dari database tirtafield tabel presensi
+        // 1. Pending: Semua pengajuan yang masih menunggu persetujuan (termasuk dari lembur dini hari atau hari sebelumnya)
         $pendingApprovals = Presensi::with('user.office')
             ->whereRaw('LOWER(approval_status) = ?', ['pending'])
             ->orderBy('id', 'desc')
             ->get();
 
+        // 2. Disetujui (Approved): Setelah berganti hari, data tersimpan di database tetapi tidak muncul lagi di tampilan admin/superadmin (hanya tampil jika disetujui/tercatat hari ini)
         $approvedApprovals = Presensi::with('user.office')
             ->whereRaw('LOWER(approval_status) = ?', ['approved'])
+            ->where(function ($q) use ($today) {
+                $q->whereDate('reviewed_at', $today)
+                  ->orWhere(function ($sub) use ($today) {
+                      $sub->whereNull('reviewed_at')
+                          ->whereDate('tanggal', $today);
+                  });
+            })
             ->orderBy('id', 'desc')
             ->get();
 
+        // 3. Ditolak (Rejected): Setelah berganti hari, data tersimpan di database tetapi tidak muncul lagi di tampilan admin/superadmin (hanya tampil jika ditolak/tercatat hari ini)
         $rejectedApprovals = Presensi::with('user.office')
             ->whereRaw('LOWER(approval_status) = ?', ['rejected'])
+            ->where(function ($q) use ($today) {
+                $q->whereDate('reviewed_at', $today)
+                  ->orWhere(function ($sub) use ($today) {
+                      $sub->whereNull('reviewed_at')
+                          ->whereDate('tanggal', $today);
+                  });
+            })
             ->orderBy('id', 'desc')
             ->get();
 
@@ -246,9 +304,12 @@ class WebDashboardController extends Controller
             'rejected_count'     => $rejectedApprovals->count(),
         ];
 
-        // Daftar aktivitas presensi hari ini
+        // Daftar aktivitas presensi hari ini (termasuk kepulangan lembur yang dicatat dini hari ini)
         $recentAttendances = Presensi::with('user.office')
-            ->whereDate('tanggal', $today)
+            ->where(function ($q) use ($today) {
+                $q->whereDate('tanggal', $today)
+                  ->orWhereDate('waktu', $today);
+            })
             ->orderBy('waktu', 'desc')
             ->take(25)
             ->get();
@@ -271,7 +332,8 @@ class WebDashboardController extends Controller
             'systemSettings',
             'allEmployees',
             'bidangList',
-            'todaySchedule'
+            'todaySchedule',
+            'isOvernightActive'
         ));
     }
 
@@ -323,11 +385,43 @@ class WebDashboardController extends Controller
         }
         $status = $request->input('status', 'all');
         $query = Presensi::with('user.office');
+        $today = Carbon::now('Asia/Jakarta')->toDateString();
 
-        if ($status !== 'all') {
-            $query->where('approval_status', $status);
+        if ($status === 'pending') {
+            $query->whereRaw('LOWER(approval_status) = ?', ['pending']);
+        } elseif ($status === 'approved') {
+            $query->whereRaw('LOWER(approval_status) = ?', ['approved'])
+                  ->where(function ($q) use ($today) {
+                      $q->whereDate('reviewed_at', $today)
+                        ->orWhere(function ($sub) use ($today) {
+                            $sub->whereNull('reviewed_at')
+                                ->whereDate('tanggal', $today);
+                        });
+                  });
+        } elseif ($status === 'rejected') {
+            $query->whereRaw('LOWER(approval_status) = ?', ['rejected'])
+                  ->where(function ($q) use ($today) {
+                      $q->whereDate('reviewed_at', $today)
+                        ->orWhere(function ($sub) use ($today) {
+                            $sub->whereNull('reviewed_at')
+                                ->whereDate('tanggal', $today);
+                        });
+                  });
         } else {
-            $query->whereNotNull('approval_status')->where('approval_status', '!=', '');
+            // 'all': semua yang pending (termasuk hari sebelumnya), dan approved/rejected hanya untuk hari ini
+            $query->where(function ($q) use ($today) {
+                $q->whereRaw('LOWER(approval_status) = ?', ['pending'])
+                  ->orWhere(function ($sub) use ($today) {
+                      $sub->whereIn('approval_status', ['approved', 'rejected'])
+                          ->where(function ($dateQ) use ($today) {
+                              $dateQ->whereDate('reviewed_at', $today)
+                                    ->orWhere(function ($nullQ) use ($today) {
+                                        $nullQ->whereNull('reviewed_at')
+                                              ->whereDate('tanggal', $today);
+                                    });
+                          });
+                  });
+            });
         }
 
         $approvals = $query->orderBy('id', 'desc')->paginate(15);

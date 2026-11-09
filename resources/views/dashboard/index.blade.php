@@ -89,6 +89,7 @@
                     $nowJakarta = \Carbon\Carbon::now('Asia/Jakarta');
                     $currentHi = $nowJakarta->format('H:i');
                     $isWorkDay = (bool)($todaySchedule['is_work_day'] ?? true);
+                    $isDiniHari = ($nowJakarta->hour < 7);
 
                     $jamMasuk = $todaySchedule['masuk'] ?? '08:00';
                     $jamIstirahatKeluar = $todaySchedule['istirahat_keluar'] ?? '12:00';
@@ -107,10 +108,13 @@
                     $isSlot3Time = ($currentHi >= $jamIstirahatKeluar);
                     $isSlot4Time = ($currentHi >= $jamPulang);
 
-                    $slot1Active = $isWorkDay && !$isSlot1Done && $isSlot1Time;
-                    $slot2Active = $isWorkDay && $isSlot1Done && !$isSlot2Done && $isSlot2Time;
-                    $slot3Active = $isWorkDay && $isSlot2Done && !$isSlot3Done && $isSlot3Time;
-                    $slot4Active = $isWorkDay && $isSlot1Done && !$isSlot4Done && $isSlot4Time;
+                    // Karyawan lembur hingga ganti hari dan pulang saat dini hari
+                    $isOvernightLemburPulang = (!empty($isOvernightActive) && !$isSlot4Done) || ($isDiniHari && $isSlot1Done && !$isSlot4Done);
+
+                    $slot1Active = $isWorkDay && !$isSlot1Done && $isSlot1Time && !$isDiniHari;
+                    $slot2Active = $isWorkDay && $isSlot1Done && !$isSlot2Done && $isSlot2Time && !$isDiniHari;
+                    $slot3Active = $isWorkDay && $isSlot2Done && !$isSlot3Done && $isSlot3Time && !$isDiniHari;
+                    $slot4Active = ($isWorkDay && $isSlot1Done && !$isSlot4Done && $isSlot4Time) || $isOvernightLemburPulang;
                 @endphp
 
                 <!-- SLOT 1: PRESENSI MASUK -->
@@ -370,38 +374,42 @@
                     </div>
                 @elseif ($slot4Active)
                     <div class="bg-white rounded-2xl border-2 border-[#316BF3] shadow-[0_8px_24px_rgba(49,107,243,0.18)] p-4 relative overflow-hidden">
-                        <!-- Top-Right Ribbon: SESI AKTIF -->
+                        <!-- Top-Right Ribbon: SESI AKTIF / LEMBUR DINI HARI -->
                         <div class="absolute top-0 right-0 px-3 py-1 bg-[#316BF3] rounded-bl-xl text-white text-[10px] font-bold tracking-wider">
-                            SESI AKTIF
+                            {{ $isOvernightLemburPulang ? 'LEMBUR DINI HARI' : 'SESI AKTIF' }}
                         </div>
                         <div class="flex items-start space-x-3">
                             <div class="w-11 h-11 rounded-xl bg-[#DAE2FD] text-[#00288E] flex items-center justify-center text-lg shrink-0 mt-0.5">
                                 <span class="material-symbols-rounded text-[22px]">logout</span>
                             </div>
                             <div class="flex-1 pr-16">
-                                <div class="text-[11px] font-bold text-[#0051D5] tracking-wide uppercase">SESI SORE</div>
-                                <h3 class="text-base font-bold text-[#131B2E] mt-0.5">Presensi Pulang</h3>
-                                <p class="text-xs text-[#64748B] mt-0.5">Batas jam kerja berakhir: {{ $todaySchedule['pulang'] ?? '17:00' }} WIB</p>
+                                <div class="text-[11px] font-bold text-[#0051D5] tracking-wide uppercase">{{ $isOvernightLemburPulang ? 'SESI LEMBUR' : 'SESI SORE' }}</div>
+                                <h3 class="text-base font-bold text-[#131B2E] mt-0.5">{{ $isOvernightLemburPulang ? 'Presensi Pulang (Lembur Dini Hari)' : 'Presensi Pulang' }}</h3>
+                                <p class="text-xs text-[#64748B] mt-0.5">
+                                    {{ $isOvernightLemburPulang ? 'Kepulangan lembur kerja lintas hari · Menunggu persetujuan supervisor' : ('Batas jam kerja berakhir: ' . ($todaySchedule['pulang'] ?? '17:00') . ' WIB') }}
+                                </p>
                             </div>
                         </div>
                         <hr class="border-t border-[#EAEDFF] my-3">
-                        <button type="button" @click="startAttendance('pulang', 'Presensi Pulang')"
+                        <button type="button" @click="startAttendance('pulang', '{{ $isOvernightLemburPulang ? 'Presensi Pulang Lembur' : 'Presensi Pulang' }}')"
                             class="w-full h-12 rounded-xl bg-[#316BF3] hover:bg-[#2558d4] text-white font-bold text-[15px] flex items-center justify-center space-x-2 shadow-sm transition-all">
                             <span class="material-symbols-rounded text-xl">location_on</span>
-                            <span>Lakukan Presensi Pulang</span>
+                            <span>{{ $isOvernightLemburPulang ? 'Lakukan Presensi Pulang Lembur' : 'Lakukan Presensi Pulang' }}</span>
                         </button>
                     </div>
                 @else
                     @php
-                        $slot4LockedReason = !$isWorkDay
+                        $slot4LockedReason = !$isWorkDay && !$isDiniHari
                             ? 'Hari ini adalah hari libur operasional. Sesi presensi tidak dapat dibuka.'
                             : (!$isSlot1Done
                                 ? 'Presensi Pulang baru dapat dilakukan setelah Anda melakukan Presensi Masuk.'
-                                : 'Sesi Presensi Pulang belum dapat dilakukan! Jam pulang kantor dibuka pukul ' . $jamPulang . ' WIB.');
-                        $slot4LockedSubtitle = !$isWorkDay
+                                : ($isDiniHari
+                                    ? 'Presensi Pulang lembur hanya dapat dibuka jika Anda memiliki riwayat presensi masuk.'
+                                    : 'Sesi Presensi Pulang belum dapat dilakukan! Jam pulang kantor dibuka pukul ' . $jamPulang . ' WIB.'));
+                        $slot4LockedSubtitle = !$isWorkDay && !$isDiniHari
                             ? 'Hari Libur Operasional'
                             : (!$isSlot1Done ? 'Sesi Sore · Belum Dimulai' : 'Sesi Sore · Belum Waktunya');
-                        $slot4LockedDesc = !$isWorkDay
+                        $slot4LockedDesc = !$isWorkDay && !$isDiniHari
                             ? 'Presensi tidak dibuka pada hari libur'
                             : (!$isSlot1Done
                                 ? 'Tersedia setelah presensi masuk (Mulai ' . $jamPulang . ' WIB)'
@@ -5016,6 +5024,7 @@
             activeSlotTitle: 'Presensi Masuk',
             opTodaySchedule: @json($todaySchedule),
             myAttendanceSlots: @json($mySlots),
+            isOvernightActive: {{ !empty($isOvernightActive) ? 'true' : 'false' }},
             selectedVerificationOfficeId: '{{ $userOffice?->id ?? ($offices->first()?->id ?? "hq") }}',
             targetOfficeName: '{{ $userOffice?->nama_kantor ?? "Kantor Pusat PERUMDA Tirta Kepri" }}',
             targetOfficeLat: {{ (float)($userOffice?->latitude ?? 0.92031) }},
@@ -5638,6 +5647,33 @@
             },
 
             canStartAttendance(slotType) {
+                const now = new Date();
+                const currentH = now.getHours();
+                const currentMinutes = currentH * 60 + now.getMinutes();
+                const isDiniHari = (currentH < 7); // 00:00 - 06:59 pagi
+
+                const isSlot1Done = !!(this.myAttendanceSlots && (this.myAttendanceSlots.masuk || this.myAttendanceSlots.Masuk));
+                const isSlot2Done = !!(this.myAttendanceSlots && (this.myAttendanceSlots.istirahatKeluar || this.myAttendanceSlots.istirahat_keluar));
+                const isSlot3Done = !!(this.myAttendanceSlots && (this.myAttendanceSlots.istirahatMasuk || this.myAttendanceSlots.istirahat_masuk));
+                const isSlot4Done = !!(this.myAttendanceSlots && (this.myAttendanceSlots.pulang || this.myAttendanceSlots.Pulang));
+
+                const norm = String(slotType || '').toLowerCase().replace(/_/g, '');
+
+                // Khusus kasus kepulangan lembur hingga dini hari lintas hari:
+                if (norm === 'pulang' && isDiniHari) {
+                    if (!isSlot1Done && !this.isOvernightActive) {
+                        return {
+                            allowed: false,
+                            message: 'Presensi Pulang lembur hanya dapat dilakukan jika Anda memiliki sesi presensi masuk.'
+                        };
+                    }
+                    if (isSlot4Done) {
+                        return { allowed: false, message: 'Anda sudah melakukan Presensi Pulang untuk sesi lembur ini.' };
+                    }
+                    // Lembur dini hari diizinkan tanpa batasan jam pulang 17:00
+                    return { allowed: true };
+                }
+
                 const sched = this.opTodaySchedule;
                 if (!sched || sched.is_work_day === false) {
                     return {
@@ -5645,9 +5681,6 @@
                         message: 'Hari ini adalah hari libur operasional. Sesi presensi tidak dapat dibuka.'
                     };
                 }
-
-                const now = new Date();
-                const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
                 const parseMinutes = (tStr, defaultStr) => {
                     const str = tStr || defaultStr;
@@ -5668,13 +5701,6 @@
                     const m = String(totalMin % 60).padStart(2, '0');
                     return `${h}:${m}`;
                 };
-
-                const isSlot1Done = !!(this.myAttendanceSlots && (this.myAttendanceSlots.masuk || this.myAttendanceSlots.Masuk));
-                const isSlot2Done = !!(this.myAttendanceSlots && (this.myAttendanceSlots.istirahatKeluar || this.myAttendanceSlots.istirahat_keluar));
-                const isSlot3Done = !!(this.myAttendanceSlots && (this.myAttendanceSlots.istirahatMasuk || this.myAttendanceSlots.istirahat_masuk));
-                const isSlot4Done = !!(this.myAttendanceSlots && (this.myAttendanceSlots.pulang || this.myAttendanceSlots.Pulang));
-
-                const norm = String(slotType || '').toLowerCase().replace(/_/g, '');
 
                 if (norm === 'masuk') {
                     if (isSlot1Done) {

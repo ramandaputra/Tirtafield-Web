@@ -48,6 +48,22 @@ class ApprovalController extends Controller
                 $q->where('pgw_id', $userId)
                   ->orWhere('nik', $userId);
             });
+        } else {
+            // Tampilan admin/superadmin: setelah berganti hari, disetujui/ditolak tidak muncul lagi (hanya hari ini)
+            $today = Carbon::now('Asia/Jakarta')->toDateString();
+            $query->where(function ($q) use ($today) {
+                $q->whereRaw('LOWER(approval_status) = ?', ['pending'])
+                  ->orWhere(function ($sub) use ($today) {
+                      $sub->whereIn('approval_status', ['approved', 'rejected'])
+                          ->where(function ($dateQ) use ($today) {
+                              $dateQ->whereDate('reviewed_at', $today)
+                                    ->orWhere(function ($nullQ) use ($today) {
+                                        $nullQ->whereNull('reviewed_at')
+                                              ->whereDate('tanggal', $today);
+                                    });
+                          });
+                  });
+            });
         }
 
         $records = $query->orderBy('waktu', 'desc')->orderBy('id', 'desc')->get();

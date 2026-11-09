@@ -207,11 +207,54 @@ class AttendanceController extends Controller
 
         $tipePengajuan = $request->input('tipe_pengajuan') ?? ($isWithinRadius ? 'dalamRadius' : 'luarRadius');
 
-        // Simpan atau perbarui record presensi untuk slot ini hari ini
+        $isDiniHari = ($nowTime->hour < 7);
+        $yesterdayDate = $nowTime->copy()->subDay()->toDateString();
+        $targetDate = $todayDate;
+        $isOvernightPulang = false;
+
+        if ($slotType === 'pulang' && $isDiniHari) {
+            // Cek apakah ada sesi presensi masuk kemarin yang belum dipulangkan
+            $yesterdayMasuk = Presensi::where(function ($q) use ($userId, $userNik) {
+                    $q->where('pgw_id', $userId)->orWhere('nik', $userNik);
+                })
+                ->whereDate('tanggal', $yesterdayDate)
+                ->where('slot_type', 'masuk')
+                ->first();
+
+            $yesterdayPulang = Presensi::where(function ($q) use ($userId, $userNik) {
+                    $q->where('pgw_id', $userId)->orWhere('nik', $userNik);
+                })
+                ->whereDate('tanggal', $yesterdayDate)
+                ->where('slot_type', 'pulang')
+                ->first();
+
+            if ($yesterdayMasuk && !$yesterdayPulang) {
+                // Tautkan langsung ke tanggal shift kemarin agar data siklus presensi kemarin lengkap
+                $targetDate = $yesterdayDate;
+                $isOvernightPulang = true;
+            } elseif (!$request->has('tanggal')) {
+                $isOvernightPulang = true;
+            }
+        }
+
+        if ($request->filled('tanggal')) {
+            $targetDate = $request->input('tanggal');
+        }
+
+        if ($isOvernightPulang) {
+            if (!str_contains(strtoupper($notes), 'LEMBUR')) {
+                $notes = trim('[LEMBUR DINI HARI] ' . $notes);
+            }
+            if ($tipePengajuan !== 'luarRadius') {
+                $tipePengajuan = 'lemburDiniHari';
+            }
+        }
+
+        // Simpan atau perbarui record presensi untuk slot ini
         $presensi = Presensi::updateOrCreate(
             [
                 'nik'       => $userNik,
-                'tanggal'   => $todayDate,
+                'tanggal'   => $targetDate,
                 'slot_type' => $slotType,
             ],
             [

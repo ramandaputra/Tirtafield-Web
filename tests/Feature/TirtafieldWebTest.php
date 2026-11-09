@@ -2,7 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Models\Presensi;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -715,6 +717,160 @@ class TirtafieldWebTest extends TestCase
             ->assertDontSee('Lakukan Presensi Pulang');
 
         // Reset waktu uji coba
+        \Carbon\Carbon::setTestNow();
+    }
+
+    public function test_approvals_after_day_change_disappear_from_admin_superadmin_view_but_persist_in_database()
+    {
+        $karyawan = User::where('role', 'karyawan')->first();
+        $direktur = User::where('role', 'direktur')->first();
+        $superadmin = User::where('role', 'staffIT')->first();
+
+        $today = Carbon::now('Asia/Jakarta')->toDateString();
+        $yesterday = Carbon::now('Asia/Jakarta')->subDay()->toDateString();
+
+        // 1. Buat record approval kemarin: approved & rejected
+        $oldApproved = Presensi::create([
+            'nik'             => $karyawan->nik,
+            'pgw_id'          => $karyawan->id,
+            'pgw_nama'        => $karyawan->name,
+            'tanggal'         => $yesterday,
+            'slot_type'       => 'pulang',
+            'waktu'           => $yesterday . ' 17:30:00',
+            'approval_status' => 'approved',
+            'reviewed_by'     => 'Direktur Test',
+            'reviewed_at'     => Carbon::parse($yesterday . ' 18:00:00', 'Asia/Jakarta'),
+            'catatan'         => 'Persetujuan kemarin yang sudah disetujui_OLD_APP',
+            'status'          => 'Tepat Waktu',
+            'tipe_pengajuan'  => 'luarRadius',
+        ]);
+
+        $oldRejected = Presensi::create([
+            'nik'             => $karyawan->nik,
+            'pgw_id'          => $karyawan->id,
+            'pgw_nama'        => $karyawan->name,
+            'tanggal'         => $yesterday,
+            'slot_type'       => 'pulang',
+            'waktu'           => $yesterday . ' 17:45:00',
+            'approval_status' => 'rejected',
+            'reviewed_by'     => 'Direktur Test',
+            'reviewed_at'     => Carbon::parse($yesterday . ' 18:15:00', 'Asia/Jakarta'),
+            'catatan'         => 'Persetujuan kemarin yang sudah ditolak_OLD_REJ',
+            'status'          => 'Tepat Waktu',
+            'tipe_pengajuan'  => 'luarRadius',
+        ]);
+
+        // 2. Buat record approval hari ini: approved hari ini
+        $todayApproved = Presensi::create([
+            'nik'             => $karyawan->nik,
+            'pgw_id'          => $karyawan->id,
+            'pgw_nama'        => $karyawan->name,
+            'tanggal'         => $today,
+            'slot_type'       => 'masuk',
+            'waktu'           => $today . ' 08:10:00',
+            'approval_status' => 'approved',
+            'reviewed_by'     => 'Direktur Test',
+            'reviewed_at'     => Carbon::now('Asia/Jakarta'),
+            'catatan'         => 'Persetujuan hari ini_TODAY_APP',
+            'status'          => 'Tepat Waktu',
+            'tipe_pengajuan'  => 'luarRadius',
+        ]);
+
+        // 3. Buat record pending kemarin (tetap harus muncul karena belum disetujui/ditolak)
+        $pendingOvernight = Presensi::create([
+            'nik'             => $karyawan->nik,
+            'pgw_id'          => $karyawan->id,
+            'pgw_nama'        => $karyawan->name,
+            'tanggal'         => $yesterday,
+            'slot_type'       => 'pulang',
+            'waktu'           => $yesterday . ' 23:45:00',
+            'approval_status' => 'pending',
+            'catatan'         => 'Lembur pipa bocor_PENDING_STILL_SHOW',
+            'status'          => 'Tepat Waktu',
+            'tipe_pengajuan'  => 'lemburDiniHari',
+        ]);
+
+        // 4. Verifikasi di Tampilan Direktur (Admin)
+        $resDirektur = $this->actingAs($direktur)->get('/dashboard');
+        $resDirektur->assertStatus(200)
+            ->assertSee('Lembur pipa bocor_PENDING_STILL_SHOW')
+            ->assertSee('Persetujuan hari ini_TODAY_APP')
+            ->assertDontSee('Persetujuan kemarin yang sudah disetujui_OLD_APP')
+            ->assertDontSee('Persetujuan kemarin yang sudah ditolak_OLD_REJ');
+
+        // 5. Verifikasi di Tampilan Superadmin (Staff IT)
+        $resSuperadmin = $this->actingAs($superadmin)->get('/dashboard');
+        $resSuperadmin->assertStatus(200)
+            ->assertSee('Lembur pipa bocor_PENDING_STILL_SHOW')
+            ->assertSee('Persetujuan hari ini_TODAY_APP')
+            ->assertDontSee('Persetujuan kemarin yang sudah disetujui_OLD_APP')
+            ->assertDontSee('Persetujuan kemarin yang sudah ditolak_OLD_REJ');
+
+        // 6. Data lama tetap tersimpan di database
+        $this->assertDatabaseHas('presensi', ['id' => $oldApproved->id, 'approval_status' => 'approved']);
+        $this->assertDatabaseHas('presensi', ['id' => $oldRejected->id, 'approval_status' => 'rejected']);
+    }
+
+    public function test_overnight_overtime_employee_can_clock_out_in_dini_hari_and_shows_in_admin_approvals()
+    {
+        $karyawan = User::where('role', 'karyawan')->first();
+        $direktur = User::where('role', 'direktur')->first();
+
+        // 1. Simulasikan karyawan absen masuk kemarin (e.g. 2026-11-09)
+        $yesterday = '2026-11-09';
+        $today = '2026-11-10';
+
+        // Hapus record tanggal terkait untuk EMP001
+        Presensi::where('nik', $karyawan->nik)->whereIn('tanggal', [$yesterday, $today])->delete();
+
+        Presensi::create([
+            'nik'             => $karyawan->nik,
+            'pgw_id'          => $karyawan->id,
+            'pgw_nama'        => $karyawan->name,
+            'tanggal'         => $yesterday,
+            'slot_type'       => 'masuk',
+            'waktu'           => $yesterday . ' 08:00:00',
+            'status'          => 'Tepat Waktu',
+            'approval_status' => 'approved',
+            'tipe_pengajuan'  => 'dalamRadius',
+        ]);
+
+        // 2. Set waktu ke dini hari keesokan harinya: pukul 02:30 WIB
+        \Carbon\Carbon::setTestNow(\Carbon\Carbon::parse($today . ' 02:30:00', 'Asia/Jakarta'));
+
+        // Dashboard karyawan menampilkan slot pulang aktif khusus lembur dini hari
+        $resKaryawan = $this->actingAs($karyawan)->get('/dashboard');
+        $resKaryawan->assertStatus(200)
+            ->assertSee('LEMBUR DINI HARI')
+            ->assertSee('Lakukan Presensi Pulang Lembur');
+
+        // 3. Karyawan melakukan absensi pulang dini hari via API
+        $recordRes = $this->actingAs($karyawan)->postJson('/api/attendance/record', [
+            'user_id'   => (string)$karyawan->id,
+            'nik'       => $karyawan->nik,
+            'user_name' => $karyawan->name,
+            'slot_type' => 'pulang',
+            'location'  => 'Kantor Pusat PERUMDA Air Minum Tirta Kepri',
+            'latitude'  => 0.92031,
+            'longitude' => 104.46069,
+            'jarak_hq'  => '10 m',
+            'notes'     => 'Perbaikan kebocoran pipa transmisi hingga dini hari',
+        ]);
+
+        $recordRes->assertStatus(200)
+            ->assertJsonPath('success', true);
+
+        // Verifikasi record di database memiliki approval_status pending dan tag lembur
+        $pulangRec = Presensi::where('nik', $karyawan->nik)->where('slot_type', 'pulang')->latest('id')->first();
+        $this->assertNotNull($pulangRec);
+        $this->assertEquals('pending', strtolower($pulangRec->approval_status));
+        $this->assertStringContainsString('LEMBUR', strtoupper($pulangRec->catatan));
+
+        // 4. Verifikasi persetujuan lembur dini hari muncul di tampilan Direktur (Admin)
+        $resDirektur = $this->actingAs($direktur)->get('/dashboard');
+        $resDirektur->assertStatus(200)
+            ->assertSee('Perbaikan kebocoran pipa transmisi hingga dini hari');
+
         \Carbon\Carbon::setTestNow();
     }
 }
