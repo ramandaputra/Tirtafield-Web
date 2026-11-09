@@ -86,16 +86,31 @@
                     $slot3Item = $mySlots['istirahatMasuk'] ?? null;
                     $slot4Item = $mySlots['pulang'] ?? null;
 
-                    $pulangHour = 17;
-                    if (!empty($todaySchedule['pulang'])) {
-                        $pParts = explode(':', $todaySchedule['pulang']);
-                        $pulangHour = (int)($pParts[0] ?? 17);
+                    $nowJakarta = \Carbon\Carbon::now('Asia/Jakarta');
+                    $currentHi = $nowJakarta->format('H:i');
+                    $isWorkDay = (bool)($todaySchedule['is_work_day'] ?? true);
+
+                    $jamMasuk = $todaySchedule['masuk'] ?? '08:00';
+                    $jamIstirahatKeluar = $todaySchedule['istirahat_keluar'] ?? '12:00';
+                    $jamIstirahatMasuk = $todaySchedule['istirahat_masuk'] ?? '13:00';
+                    $jamPulang = $todaySchedule['pulang'] ?? '17:00';
+
+                    // Sesi presensi masuk dibuka mulai 1 jam sebelum jam masuk resmi
+                    try {
+                        $jamBukaMasuk = \Carbon\Carbon::createFromFormat('H:i', $jamMasuk)->subHour()->format('H:i');
+                    } catch (\Throwable $e) {
+                        $jamBukaMasuk = '07:00';
                     }
 
-                    $slot1Active = !$isSlot1Done;
-                    $slot2Active = $isSlot1Done && !$isSlot2Done;
-                    $slot3Active = $isSlot2Done && !$isSlot3Done;
-                    $slot4Active = ($isSlot3Done && !$isSlot4Done) || ($isSlot1Done && !$isSlot4Done && !$isSlot2Done && !$isSlot3Done && (int)date('H') >= ($pulangHour - 1));
+                    $isSlot1Time = ($currentHi >= $jamBukaMasuk);
+                    $isSlot2Time = ($currentHi >= $jamIstirahatKeluar);
+                    $isSlot3Time = ($currentHi >= $jamIstirahatKeluar);
+                    $isSlot4Time = ($currentHi >= $jamPulang);
+
+                    $slot1Active = $isWorkDay && !$isSlot1Done && $isSlot1Time;
+                    $slot2Active = $isWorkDay && $isSlot1Done && !$isSlot2Done && $isSlot2Time;
+                    $slot3Active = $isWorkDay && $isSlot2Done && !$isSlot3Done && $isSlot3Time;
+                    $slot4Active = $isWorkDay && $isSlot1Done && !$isSlot4Done && $isSlot4Time;
                 @endphp
 
                 <!-- SLOT 1: PRESENSI MASUK -->
@@ -146,16 +161,25 @@
                         </button>
                     </div>
                 @else
-                    <div @click="showLockedToast('Presensi Masuk belum dibuka atau waktu telah berakhir.')"
+                    @php
+                        $slot1LockedReason = !$isWorkDay
+                            ? 'Hari ini adalah hari libur operasional. Sesi presensi tidak dapat dibuka.'
+                            : ('Sesi Presensi Masuk belum dapat dibuka! Jadwal presensi masuk baru dibuka mulai pukul ' . $jamBukaMasuk . ' WIB (Jadwal masuk: ' . $jamMasuk . ' WIB).');
+                        $slot1LockedSubtitle = !$isWorkDay ? 'Hari Libur Operasional' : 'Sesi Pagi · Belum Waktunya';
+                        $slot1LockedDesc = !$isWorkDay
+                            ? 'Presensi tidak dibuka pada hari libur'
+                            : ('Dibuka mulai pukul ' . $jamBukaMasuk . ' WIB (Jadwal: ' . $jamMasuk . ' WIB)');
+                    @endphp
+                    <div @click="showLockedToast('{{ $slot1LockedReason }}')"
                         class="cursor-pointer opacity-80 bg-[#F2F3FF]/60 rounded-2xl border border-[#DAE2FD] p-4 flex items-center justify-between hover:border-slate-300 transition-all">
                         <div class="flex items-center space-x-3">
                             <div class="w-11 h-11 rounded-xl bg-[#EAEDFF] text-[#757684] flex items-center justify-center text-lg shrink-0">
                                 <span class="material-symbols-rounded text-xl">login</span>
                             </div>
                             <div>
-                                <div class="text-[11px] text-[#757684] font-semibold">Sesi Pagi · Belum Dimulai</div>
+                                <div class="text-[11px] text-[#757684] font-semibold">{{ $slot1LockedSubtitle }}</div>
                                 <h3 class="text-sm font-semibold text-[#131B2E]">Presensi Masuk</h3>
-                                <p class="text-xs text-[#64748B]">Jadwal masuk: {{ $todaySchedule['masuk'] ?? '08:00' }} WIB</p>
+                                <p class="text-xs text-[#64748B]">{{ $slot1LockedDesc }}</p>
                             </div>
                         </div>
                         <div class="w-8 h-8 rounded-full bg-[#EAEDFF] flex items-center justify-center text-[#757684]">
@@ -186,7 +210,7 @@
                         </div>
                         <span class="material-symbols-rounded text-[22px] text-[#316BF3]">check_circle</span>
                     </div>
-                @elseif ($slot2Active || !$isSlot1Done)
+                @elseif ($slot2Active)
                     <div class="bg-white rounded-2xl border-2 border-[#316BF3] shadow-[0_8px_24px_rgba(49,107,243,0.18)] p-4 relative overflow-hidden">
                         <!-- Top-Right Ribbon: SESI AKTIF -->
                         <div class="absolute top-0 right-0 px-3 py-1 bg-[#316BF3] rounded-bl-xl text-white text-[10px] font-bold tracking-wider">
@@ -210,16 +234,31 @@
                         </button>
                     </div>
                 @else
-                    <div @click="showLockedToast(!$isSlot1Done ? 'Presensi Istirahat Keluar baru dapat dilakukan setelah Anda melakukan Presensi Masuk.' : 'Sesi Presensi Istirahat Keluar belum dapat dilakukan! Jadwal resmi dibuka pukul {{ $todaySchedule['istirahat_keluar'] ?? '12:00' }} WIB.')"
+                    @php
+                        $slot2LockedReason = !$isWorkDay
+                            ? 'Hari ini adalah hari libur operasional. Sesi presensi tidak dapat dibuka.'
+                            : (!$isSlot1Done
+                                ? 'Presensi Istirahat Keluar baru dapat dilakukan setelah Anda melakukan Presensi Masuk.'
+                                : 'Sesi Presensi Istirahat Keluar belum dapat dibuka! Jadwal resmi dibuka pukul ' . $jamIstirahatKeluar . ' WIB.');
+                        $slot2LockedSubtitle = !$isWorkDay
+                            ? 'Hari Libur Operasional'
+                            : (!$isSlot1Done ? 'Sesi Siang · Belum Dimulai' : 'Sesi Siang · Belum Waktunya');
+                        $slot2LockedDesc = !$isWorkDay
+                            ? 'Presensi tidak dibuka pada hari libur'
+                            : (!$isSlot1Done
+                                ? 'Tersedia setelah presensi masuk (Mulai ' . $jamIstirahatKeluar . ' WIB)'
+                                : 'Tersedia mulai pukul ' . $jamIstirahatKeluar . ' WIB');
+                    @endphp
+                    <div @click="showLockedToast('{{ $slot2LockedReason }}')"
                         class="cursor-pointer opacity-80 bg-[#F2F3FF]/60 rounded-2xl border border-[#DAE2FD] p-4 flex items-center justify-between hover:border-slate-300 transition-all">
                         <div class="flex items-center space-x-3">
                             <div class="w-11 h-11 rounded-xl bg-[#EAEDFF] text-[#757684] flex items-center justify-center text-lg shrink-0">
                                 <span class="material-symbols-rounded text-xl">restaurant</span>
                             </div>
                             <div>
-                                <div class="text-[11px] text-[#757684] font-semibold">{{ !$isSlot1Done ? 'Sesi Siang · Belum Dimulai' : 'Sesi Siang · Belum Waktunya' }}</div>
+                                <div class="text-[11px] text-[#757684] font-semibold">{{ $slot2LockedSubtitle }}</div>
                                 <h3 class="text-sm font-semibold text-[#131B2E]">Presensi Istirahat Keluar</h3>
-                                <p class="text-xs text-[#64748B]">{{ !$isSlot1Done ? 'Tersedia setelah presensi masuk (Mulai ' . ($todaySchedule['istirahat_keluar'] ?? '12:00') . ' WIB)' : 'Tersedia mulai pukul ' . ($todaySchedule['istirahat_keluar'] ?? '12:00') . ' WIB' }}</p>
+                                <p class="text-xs text-[#64748B]">{{ $slot2LockedDesc }}</p>
                             </div>
                         </div>
                         <div class="w-8 h-8 rounded-full bg-[#EAEDFF] flex items-center justify-center text-[#757684]">
@@ -274,16 +313,31 @@
                         </button>
                     </div>
                 @else
-                    <div @click="showLockedToast(!$isSlot2Done ? 'Presensi Istirahat Masuk baru dapat dilakukan setelah melakukan Presensi Istirahat Keluar.' : 'Sesi Presensi Istirahat Masuk belum dapat dilakukan! Jadwal resmi dibuka pukul {{ $todaySchedule['istirahat_masuk'] ?? '13:00' }} WIB.')"
+                    @php
+                        $slot3LockedReason = !$isWorkDay
+                            ? 'Hari ini adalah hari libur operasional. Sesi presensi tidak dapat dibuka.'
+                            : (!$isSlot2Done
+                                ? 'Presensi Istirahat Masuk baru dapat dilakukan setelah melakukan Presensi Istirahat Keluar.'
+                                : 'Sesi Presensi Istirahat Masuk belum dapat dibuka! Jadwal resmi dibuka pukul ' . $jamIstirahatMasuk . ' WIB.');
+                        $slot3LockedSubtitle = !$isWorkDay
+                            ? 'Hari Libur Operasional'
+                            : (!$isSlot2Done ? 'Sesi Siang · Menunggu Istirahat' : 'Sesi Siang · Belum Waktunya');
+                        $slot3LockedDesc = !$isWorkDay
+                            ? 'Presensi tidak dibuka pada hari libur'
+                            : (!$isSlot2Done
+                                ? 'Tersedia setelah presensi istirahat keluar (Mulai ' . $jamIstirahatMasuk . ' WIB)'
+                                : 'Tersedia mulai pukul ' . $jamIstirahatMasuk . ' WIB');
+                    @endphp
+                    <div @click="showLockedToast('{{ $slot3LockedReason }}')"
                         class="cursor-pointer opacity-80 bg-[#F2F3FF]/60 rounded-2xl border border-[#DAE2FD] p-4 flex items-center justify-between hover:border-slate-300 transition-all">
                         <div class="flex items-center space-x-3">
                             <div class="w-11 h-11 rounded-xl bg-[#EAEDFF] text-[#757684] flex items-center justify-center text-lg shrink-0">
                                 <span class="material-symbols-rounded text-xl">coffee</span>
                             </div>
                             <div>
-                                <div class="text-[11px] text-[#757684] font-semibold">{{ !$isSlot2Done ? 'Sesi Siang · Menunggu Istirahat' : 'Sesi Siang · Belum Waktunya' }}</div>
+                                <div class="text-[11px] text-[#757684] font-semibold">{{ $slot3LockedSubtitle }}</div>
                                 <h3 class="text-sm font-semibold text-[#131B2E]">Presensi Istirahat Masuk</h3>
-                                <p class="text-xs text-[#64748B]">{{ !$isSlot2Done ? 'Tersedia setelah presensi istirahat keluar (Mulai ' . ($todaySchedule['istirahat_masuk'] ?? '13:00') . ' WIB)' : 'Tersedia mulai pukul ' . ($todaySchedule['istirahat_masuk'] ?? '13:00') . ' WIB' }}</p>
+                                <p class="text-xs text-[#64748B]">{{ $slot3LockedDesc }}</p>
                             </div>
                         </div>
                         <div class="w-8 h-8 rounded-full bg-[#EAEDFF] flex items-center justify-center text-[#757684]">
@@ -338,16 +392,31 @@
                         </button>
                     </div>
                 @else
-                    <div @click="showLockedToast(!$isSlot1Done ? 'Presensi Pulang baru dapat dilakukan setelah Anda melakukan Presensi Masuk.' : 'Sesi Presensi Pulang belum dapat dilakukan! Jam pulang kantor dibuka pukul {{ $todaySchedule['pulang'] ?? '17:00' }} WIB.')"
+                    @php
+                        $slot4LockedReason = !$isWorkDay
+                            ? 'Hari ini adalah hari libur operasional. Sesi presensi tidak dapat dibuka.'
+                            : (!$isSlot1Done
+                                ? 'Presensi Pulang baru dapat dilakukan setelah Anda melakukan Presensi Masuk.'
+                                : 'Sesi Presensi Pulang belum dapat dilakukan! Jam pulang kantor dibuka pukul ' . $jamPulang . ' WIB.');
+                        $slot4LockedSubtitle = !$isWorkDay
+                            ? 'Hari Libur Operasional'
+                            : (!$isSlot1Done ? 'Sesi Sore · Belum Dimulai' : 'Sesi Sore · Belum Waktunya');
+                        $slot4LockedDesc = !$isWorkDay
+                            ? 'Presensi tidak dibuka pada hari libur'
+                            : (!$isSlot1Done
+                                ? 'Tersedia setelah presensi masuk (Mulai ' . $jamPulang . ' WIB)'
+                                : 'Tersedia mulai pukul ' . $jamPulang . ' WIB');
+                    @endphp
+                    <div @click="showLockedToast('{{ $slot4LockedReason }}')"
                         class="cursor-pointer opacity-80 bg-[#F2F3FF]/60 rounded-2xl border border-[#DAE2FD] p-4 flex items-center justify-between hover:border-slate-300 transition-all">
                         <div class="flex items-center space-x-3">
                             <div class="w-11 h-11 rounded-xl bg-[#EAEDFF] text-[#757684] flex items-center justify-center text-lg shrink-0">
                                 <span class="material-symbols-rounded text-xl">logout</span>
                             </div>
                             <div>
-                                <div class="text-[11px] text-[#757684] font-semibold">{{ !$isSlot1Done ? 'Sesi Sore · Belum Dimulai' : 'Sesi Sore · Belum Waktunya' }}</div>
+                                <div class="text-[11px] text-[#757684] font-semibold">{{ $slot4LockedSubtitle }}</div>
                                 <h3 class="text-sm font-semibold text-[#131B2E]">Presensi Pulang</h3>
-                                <p class="text-xs text-[#64748B]">{{ !$isSlot1Done ? 'Tersedia setelah presensi masuk (Mulai ' . ($todaySchedule['pulang'] ?? '17:00') . ' WIB)' : 'Tersedia mulai pukul ' . ($todaySchedule['pulang'] ?? '17:00') . ' WIB' }}</p>
+                                <p class="text-xs text-[#64748B]">{{ $slot4LockedDesc }}</p>
                             </div>
                         </div>
                         <div class="w-8 h-8 rounded-full bg-[#EAEDFF] flex items-center justify-center text-[#757684]">
@@ -4946,6 +5015,7 @@
             activeSlotType: 'masuk',
             activeSlotTitle: 'Presensi Masuk',
             opTodaySchedule: @json($todaySchedule),
+            myAttendanceSlots: @json($mySlots),
             selectedVerificationOfficeId: '{{ $userOffice?->id ?? ($offices->first()?->id ?? "hq") }}',
             targetOfficeName: '{{ $userOffice?->nama_kantor ?? "Kantor Pusat PERUMDA Tirta Kepri" }}',
             targetOfficeLat: {{ (float)($userOffice?->latitude ?? 0.92031) }},
@@ -5567,7 +5637,125 @@
                        (tipe && String(tipe).toLowerCase().includes(q));
             },
 
+            canStartAttendance(slotType) {
+                const sched = this.opTodaySchedule;
+                if (!sched || sched.is_work_day === false) {
+                    return {
+                        allowed: false,
+                        message: 'Hari ini adalah hari libur operasional. Sesi presensi tidak dapat dibuka.'
+                    };
+                }
+
+                const now = new Date();
+                const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+                const parseMinutes = (tStr, defaultStr) => {
+                    const str = tStr || defaultStr;
+                    const parts = str.split(':');
+                    return parseInt(parts[0], 10) * 60 + parseInt(parts[1] || '0', 10);
+                };
+
+                const jamMasukMin = parseMinutes(sched.masuk, '08:00');
+                const jamIstirahatKeluarMin = parseMinutes(sched.istirahat_keluar, '12:00');
+                const jamIstirahatMasukMin = parseMinutes(sched.istirahat_masuk, '13:00');
+                const jamPulangMin = parseMinutes(sched.pulang, '17:00');
+
+                // Jendela presensi masuk dibuka 60 menit sebelum jam masuk resmi
+                const jamBukaMasukMin = Math.max(0, jamMasukMin - 60);
+
+                const formatTime = (totalMin) => {
+                    const h = String(Math.floor(totalMin / 60)).padStart(2, '0');
+                    const m = String(totalMin % 60).padStart(2, '0');
+                    return `${h}:${m}`;
+                };
+
+                const isSlot1Done = !!(this.myAttendanceSlots && (this.myAttendanceSlots.masuk || this.myAttendanceSlots.Masuk));
+                const isSlot2Done = !!(this.myAttendanceSlots && (this.myAttendanceSlots.istirahatKeluar || this.myAttendanceSlots.istirahat_keluar));
+                const isSlot3Done = !!(this.myAttendanceSlots && (this.myAttendanceSlots.istirahatMasuk || this.myAttendanceSlots.istirahat_masuk));
+                const isSlot4Done = !!(this.myAttendanceSlots && (this.myAttendanceSlots.pulang || this.myAttendanceSlots.Pulang));
+
+                const norm = String(slotType || '').toLowerCase().replace(/_/g, '');
+
+                if (norm === 'masuk') {
+                    if (isSlot1Done) {
+                        return { allowed: false, message: 'Anda sudah melakukan Presensi Masuk hari ini.' };
+                    }
+                    if (currentMinutes < jamBukaMasukMin) {
+                        return {
+                            allowed: false,
+                            message: `Sesi Presensi Masuk belum dapat dibuka! Jadwal presensi masuk baru dibuka mulai pukul ${formatTime(jamBukaMasukMin)} WIB (Jadwal masuk: ${sched.masuk || '08:00'} WIB).`
+                        };
+                    }
+                    return { allowed: true };
+                }
+
+                if (norm === 'istirahatkeluar') {
+                    if (!isSlot1Done) {
+                        return {
+                            allowed: false,
+                            message: 'Presensi Istirahat Keluar baru dapat dilakukan setelah Anda melakukan Presensi Masuk.'
+                        };
+                    }
+                    if (isSlot2Done) {
+                        return { allowed: false, message: 'Anda sudah melakukan Presensi Istirahat Keluar hari ini.' };
+                    }
+                    if (currentMinutes < jamIstirahatKeluarMin) {
+                        return {
+                            allowed: false,
+                            message: `Sesi Presensi Istirahat Keluar belum dapat dibuka! Jadwal resmi dibuka pukul ${sched.istirahat_keluar || '12:00'} WIB.`
+                        };
+                    }
+                    return { allowed: true };
+                }
+
+                if (norm === 'istirahatmasuk') {
+                    if (!isSlot2Done) {
+                        return {
+                            allowed: false,
+                            message: 'Presensi Istirahat Masuk baru dapat dilakukan setelah melakukan Presensi Istirahat Keluar.'
+                        };
+                    }
+                    if (isSlot3Done) {
+                        return { allowed: false, message: 'Anda sudah melakukan Presensi Istirahat Masuk hari ini.' };
+                    }
+                    if (currentMinutes < jamIstirahatKeluarMin) {
+                        return {
+                            allowed: false,
+                            message: `Sesi Presensi Istirahat Masuk belum dapat dibuka! Jadwal resmi dibuka pukul ${sched.istirahat_masuk || '13:00'} WIB.`
+                        };
+                    }
+                    return { allowed: true };
+                }
+
+                if (norm === 'pulang') {
+                    if (!isSlot1Done) {
+                        return {
+                            allowed: false,
+                            message: 'Presensi Pulang baru dapat dilakukan setelah Anda melakukan Presensi Masuk.'
+                        };
+                    }
+                    if (isSlot4Done) {
+                        return { allowed: false, message: 'Anda sudah melakukan Presensi Pulang hari ini.' };
+                    }
+                    if (currentMinutes < jamPulangMin) {
+                        return {
+                            allowed: false,
+                            message: `Sesi Presensi Pulang belum dapat dilakukan! Jam pulang kantor dibuka pukul ${sched.pulang || '17:00'} WIB.`
+                        };
+                    }
+                    return { allowed: true };
+                }
+
+                return { allowed: true };
+            },
+
             startAttendance(slotType, slotTitle) {
+                const check = this.canStartAttendance(slotType);
+                if (!check.allowed) {
+                    this.showLockedToast(check.message);
+                    return;
+                }
+
                 this.activeSlotType = slotType;
                 this.activeSlotTitle = slotTitle;
                 this.verificationStep = 1;
@@ -5947,6 +6135,9 @@
                     this.isSubmitting = false;
 
                     if (res.ok && json.success) {
+                        if (this.myAttendanceSlots) {
+                            this.myAttendanceSlots[this.activeSlotType] = json.data;
+                        }
                         this.verificationStep = 3;
                     } else {
                         alert(json.message || 'Gagal menyimpan presensi. Silakan periksa koneksi data Anda.');

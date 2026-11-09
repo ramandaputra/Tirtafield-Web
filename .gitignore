@@ -19,3 +19,6 @@ yarn-error.log
 /.vscode
 /scratch
 /legacy_backup
+/public/uploads/*
+!/public/uploads/.gitkeep
+

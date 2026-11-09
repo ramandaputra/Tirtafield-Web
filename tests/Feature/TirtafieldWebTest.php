@@ -672,4 +672,49 @@ class TirtafieldWebTest extends TestCase
             ->assertSee('Bukti Swafoto Presensi', false)
             ->assertSee('detailData.fotoUrl', false);
     }
+
+    public function test_karyawan_attendance_session_locked_when_not_time_yet()
+    {
+        $karyawan = User::where('role', 'karyawan')->first();
+
+        // 1. Script Alpine memuat validasi canStartAttendance dan penjagaan di startAttendance
+        $resKaryawan = $this->actingAs($karyawan)->get('/dashboard');
+        $resKaryawan->assertStatus(200)
+            ->assertSee('canStartAttendance(slotType)')
+            ->assertSee('const check = this.canStartAttendance(slotType);', false)
+            ->assertSee('if (!check.allowed) {', false)
+            ->assertSee('this.showLockedToast(check.message);', false)
+            ->assertSee('myAttendanceSlots:');
+
+        // 2. Simulasi Waktu Pagi Sebelum Jam Buka (Pukul 05:00 WIB di hari Selasa)
+        // Jadwal Selasa: Masuk 08:00, jam buka 07:00
+        \Carbon\Carbon::setTestNow(\Carbon\Carbon::parse('2026-11-10 05:00:00', 'Asia/Jakarta'));
+        $resEarly = $this->actingAs($karyawan)->get('/dashboard');
+        $resEarly->assertStatus(200)
+            ->assertSee('Sesi Pagi · Belum Waktunya')
+            ->assertSee('Dibuka mulai pukul 07:00 WIB', false)
+            ->assertSee('Sesi Presensi Masuk belum dapat dibuka!')
+            ->assertDontSee('Lakukan Presensi Masuk');
+
+        // 3. Simulasi Waktu Kerja Siang Sebelum Jam Istirahat (Pukul 10:00 WIB)
+        // Belum jam istirahat keluar (12:00) dan belum jam pulang (17:00)
+        \Carbon\Carbon::setTestNow(\Carbon\Carbon::parse('2026-11-10 10:00:00', 'Asia/Jakarta'));
+        $resMid = $this->actingAs($karyawan)->get('/dashboard');
+        $resMid->assertStatus(200)
+            ->assertSee('Sesi Siang · Belum Dimulai')
+            ->assertSee('Sesi Sore · Belum Dimulai');
+
+        // 4. Simulasi Hari Libur (Hari Minggu)
+        \Carbon\Carbon::setTestNow(\Carbon\Carbon::parse('2026-11-15 10:00:00', 'Asia/Jakarta'));
+        $resHoliday = $this->actingAs($karyawan)->get('/dashboard');
+        $resHoliday->assertStatus(200)
+            ->assertSee('Hari Libur Operasional')
+            ->assertSee('Hari ini adalah hari libur operasional. Sesi presensi tidak dapat dibuka.', false)
+            ->assertDontSee('Lakukan Presensi Masuk')
+            ->assertDontSee('Lakukan Presensi Istirahat')
+            ->assertDontSee('Lakukan Presensi Pulang');
+
+        // Reset waktu uji coba
+        \Carbon\Carbon::setTestNow();
+    }
 }
