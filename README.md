@@ -65,16 +65,6 @@ Buka browser di: **`http://127.0.0.1:8000`** atau melalui Virtual Host Laragon: 
 
 ---
 
-## 🔑 Akun Default untuk Login & Demo
-
-| Role | NIP / NIK | PIN / Password | Nama Akun |
-| :--- | :--- | :--- | :--- |
-| **Staff IT (Superadmin)** | `P242101` | `123456` | Pusimpel |
-| **Direktur (Admin)** | `D001` | `123456` | IR. H. ABDUL KHOLIK F, M.M. |
-| **Karyawan (User)** | `EMP001` | `123456` | Budi Santoso |
-
----
-
 ## 📡 Daftar Endpoint API (Kompatibel Penuh)
 
 ### 1. Autentikasi & Profil
